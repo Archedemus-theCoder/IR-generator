@@ -95,3 +95,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Inter', sa
 .sync-values { display: flex; gap: 8px; flex-wrap: wrap; }
 .sync-value { font-size: 12px; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #eee; }
 .sync-value.negative { color: #E74C3C; border-color: #fdd; }
+
+/* --- Financial Import --- */
+.import-section { background: #f8fafe; border: 1px solid #d0e0f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+.import-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.import-icon { font-size: 24px; }
+.import-header strong { font-size: 14px; }
+.import-hint { font-size: 11px; color: #888; margin-top: 2px; }
+.import-actions { display: flex; gap: 8px; }
+.import-btn { padding: 8px 16px; background: #E8470A; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.import-btn:hover { background: #d13d06; }
+.import-btn:disabled { opacity: 0.5; }
+.import-template-btn { padding: 8px 16px; background: #fff; color: #333; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.import-template-btn:hover { border-color: #999; }
+.import-msg { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.import-msg.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.import-msg.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }

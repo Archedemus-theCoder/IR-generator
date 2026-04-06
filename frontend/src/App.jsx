@@ -152,6 +152,11 @@ export default function App() {
               slideName={slideNames[selectedSlide] || selectedSlide}
               data={doc[selectedSlide]}
               onUpdate={(field, value) => updateSlide(selectedSlide, field, value)}
+              onReload={() => {
+                fetch(`${API}/slides`).then(r => r.json()).then(res => {
+                  setDoc(res.data)
+                })
+              }}
             />
             <Preview slideId={selectedSlide} doc={doc} />
           </>

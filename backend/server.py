@@ -5,7 +5,7 @@ import io
 import base64
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -129,6 +129,86 @@ def financial_summary():
             summary["latest_revenue"] = list(revenue_row.values.values())[-1] if revenue_row.values else "0"
             summary["revenue_by_year"] = revenue_row.values
     return summary
+
+
+@app.post("/api/import/financial")
+async def import_financial(file: UploadFile = File(...)):
+    """Import financial data from Excel or CSV file.
+
+    Expected format:
+    - Row headers in first column (매출, 영업이익, etc.)
+    - Year headers in first row (2026, 2027, etc.)
+    """
+    import tempfile
+    contents = await file.read()
+    suffix = Path(file.filename).suffix.lower()
+
+    try:
+        if suffix in (".xlsx", ".xls"):
+            import openpyxl
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(contents)
+            tmp.close()
+            wb = openpyxl.load_workbook(tmp.name, data_only=True)
+            ws = wb.active
+
+            # Parse headers (years) from first row
+            years = []
+            for col in range(2, ws.max_column + 1):
+                val = ws.cell(1, col).value
+                if val:
+                    years.append(str(val).strip())
+
+            # Parse rows
+            rows = []
+            for row in range(2, ws.max_row + 1):
+                label = ws.cell(row, 1).value
+                if not label:
+                    continue
+                values = {}
+                for ci, yr in enumerate(years):
+                    cell_val = ws.cell(row, ci + 2).value
+                    if cell_val is not None:
+                        values[yr] = str(cell_val).strip()
+                    else:
+                        values[yr] = ""
+                rows.append({"label": str(label).strip(), "values": values})
+
+        elif suffix == ".csv":
+            import csv
+            text = contents.decode("utf-8-sig")
+            reader = csv.reader(text.splitlines())
+            header = next(reader)
+            years = [h.strip() for h in header[1:] if h.strip()]
+            rows = []
+            for row_data in reader:
+                if not row_data or not row_data[0].strip():
+                    continue
+                label = row_data[0].strip()
+                values = {}
+                for ci, yr in enumerate(years):
+                    val = row_data[ci + 1].strip() if ci + 1 < len(row_data) else ""
+                    values[yr] = val
+                rows.append({"label": label, "values": values})
+        else:
+            return {"error": f"지원하지 않는 파일 형식: {suffix}. .xlsx 또는 .csv를 사용해주세요."}
+
+        # Update document
+        from schema import PLRow
+        doc = _load()
+        doc.pl.years = years
+        doc.pl.rows = [PLRow(**r) for r in rows]
+        _save(doc)
+
+        return {
+            "ok": True,
+            "years": years,
+            "rows": rows,
+            "message": f"{len(rows)}개 항목, {len(years)}개 연도 데이터를 가져왔습니다.",
+        }
+
+    except Exception as e:
+        return {"error": f"파일 파싱 실패: {str(e)}"}
 
 
 @app.post("/api/chart/pl")

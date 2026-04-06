@@ -443,6 +443,28 @@ def generate_pptx(doc: IRDocument, output_path: Path) -> Path:
     return output_path
 
 
+def _setup_preview_font():
+    """Setup Korean font for preview rendering."""
+    import platform
+    import matplotlib.font_manager as fmgr
+    system = platform.system()
+    candidates = (
+        ["AppleGothic", "Apple SD Gothic Neo"] if system == "Darwin"
+        else ["Malgun Gothic"] if system == "Windows"
+        else ["Noto Sans CJK KR", "NanumGothic", "DejaVu Sans"]
+    )
+    available = {f.name for f in fmgr.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            return name
+    # Fallback
+    for f in fmgr.fontManager.ttflist:
+        if any(kw in f.name.lower() for kw in ["gothic", "nanum", "noto", "malgun"]):
+            return f.name
+    return "sans-serif"
+
+_PREVIEW_FONT = None
+
 def generate_single_slide_png(doc: IRDocument, slide_id: str):
     """Generate a single slide as PNG bytes (for preview).
 
@@ -461,6 +483,13 @@ def generate_single_slide_png(doc: IRDocument, slide_id: str):
     import matplotlib.patches as patches
     import io
     import textwrap
+
+    # Setup Korean font
+    global _PREVIEW_FONT
+    if _PREVIEW_FONT is None:
+        _PREVIEW_FONT = _setup_preview_font()
+    plt.rcParams["font.family"] = _PREVIEW_FONT
+    plt.rcParams["axes.unicode_minus"] = False
 
     fig, ax = plt.subplots(figsize=(13.333, 7.5))
     fig.patch.set_facecolor("white")

@@ -3,11 +3,45 @@
 from __future__ import annotations
 import io
 import re
+import platform
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import matplotlib.font_manager as fm
+
+# --- Korean font setup ---
+def _setup_korean_font():
+    """Find and set a Korean-capable font for matplotlib."""
+    system = platform.system()
+    candidates = []
+    if system == "Darwin":  # macOS
+        candidates = ["AppleGothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Malgun Gothic"]
+    elif system == "Windows":
+        candidates = ["Malgun Gothic", "맑은 고딕", "NanumGothic"]
+    else:  # Linux
+        candidates = ["Noto Sans CJK KR", "NanumGothic", "UnDotum", "DejaVu Sans"]
+
+    available = {f.name for f in fm.fontManager.ttflist}
+    for font_name in candidates:
+        if font_name in available:
+            plt.rcParams["font.family"] = font_name
+            plt.rcParams["axes.unicode_minus"] = False
+            return font_name
+
+    # Fallback: try to find ANY font with Korean glyphs
+    for f in fm.fontManager.ttflist:
+        if any(kw in f.name.lower() for kw in ["gothic", "nanum", "noto", "malgun", "gulim", "batang"]):
+            plt.rcParams["font.family"] = f.name
+            plt.rcParams["axes.unicode_minus"] = False
+            return f.name
+
+    # Last resort
+    plt.rcParams["axes.unicode_minus"] = False
+    return None
+
+KOREAN_FONT = _setup_korean_font()
 
 ORANGE = "#E8470A"
 BLACK = "#111111"
