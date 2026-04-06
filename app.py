@@ -279,6 +279,27 @@ elif page == "📝 슬라이드 편집":
                     )
                     fm["audiences"] = new_audiences
 
+                    # Chart selection
+                    chart_options = ["없음", "revenue_chart", "pl_summary", "growth_line", "cost_donut", "margin_trend", "revenue_breakdown"]
+                    chart_labels = {
+                        "없음": "없음",
+                        "revenue_chart": "매출 vs 비용 차트",
+                        "pl_summary": "P&L 요약 차트",
+                        "growth_line": "성장 추이 차트",
+                        "cost_donut": "비용 구조 도넛 차트",
+                        "margin_trend": "마진 추이 차트",
+                        "revenue_breakdown": "매출 분석 차트",
+                    }
+                    current_chart = fm.get("chart", None) or "없음"
+                    selected_chart = st.selectbox(
+                        "차트 (자동 생성)",
+                        chart_options,
+                        index=chart_options.index(current_chart) if current_chart in chart_options else 0,
+                        format_func=lambda x: chart_labels.get(x, x),
+                        key=f"chart_{i}",
+                    )
+                    fm["chart"] = selected_chart if selected_chart != "없음" else None
+
                     # Edit body
                     new_body = st.text_area(
                         "내용 (Markdown + {{ 변수 }} 사용 가능)",

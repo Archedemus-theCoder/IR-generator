@@ -188,11 +188,161 @@ def render_growth_line_chart(
     return output_path
 
 
+def render_cost_breakdown_donut(
+    context: dict[str, Any],
+    theme: BrandTheme,
+    output_path: Path | None = None,
+) -> Path:
+    """Render a donut chart showing cost breakdown."""
+    _apply_theme(theme)
+    colors = theme.colors
+    palette = [colors.primary, colors.secondary, colors.accent, "#6366F1", "#EC4899"]
+
+    cost_items = context.get("cost_items", {})
+    if not cost_items:
+        return render_revenue_chart(context, theme, output_path)
+
+    labels = [item["label"] for item in cost_items.values()]
+    totals = [sum(item["values"]) for item in cost_items.values()]
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    wedges, texts, autotexts = ax.pie(
+        totals, labels=None, autopct="%1.0f%%",
+        colors=palette[:len(totals)],
+        startangle=90, pctdistance=0.75,
+        wedgeprops={"width": 0.4, "edgecolor": "white", "linewidth": 2},
+    )
+
+    for autotext in autotexts:
+        autotext.set_fontsize(12)
+        autotext.set_fontweight("bold")
+        autotext.set_color("white")
+
+    # Center text
+    total = sum(totals)
+    ax.text(0, 0.05, _compact_num(total), ha="center", va="center",
+            fontsize=22, fontweight="bold", color=colors.text_primary)
+    ax.text(0, -0.12, "Total Costs", ha="center", va="center",
+            fontsize=11, color=colors.text_secondary)
+
+    ax.legend(labels, loc="lower center", ncol=2, frameon=False,
+              fontsize=10, bbox_to_anchor=(0.5, -0.05))
+    ax.set_title("Cost Structure", fontsize=16, fontweight="bold", pad=20)
+
+    plt.tight_layout()
+    if output_path is None:
+        output_path = Path(tempfile.mktemp(suffix=".png"))
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def render_margin_trend(
+    context: dict[str, Any],
+    theme: BrandTheme,
+    output_path: Path | None = None,
+) -> Path:
+    """Render margin trend with area fill."""
+    _apply_theme(theme)
+    colors = theme.colors
+
+    periods = context.get("periods", [])
+    revenue = context.get("revenue_by_period", [])
+    costs = context.get("costs_by_period", [])
+
+    margins = []
+    for r, c in zip(revenue, costs):
+        margins.append((r - c) / r * 100 if r > 0 else 0)
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+
+    # Fill area
+    ax.fill_between(range(len(periods)), margins, alpha=0.15, color=colors.primary)
+    ax.plot(range(len(periods)), margins, color=colors.primary, linewidth=3,
+            marker="o", markersize=8, markerfacecolor="white",
+            markeredgecolor=colors.primary, markeredgewidth=2)
+
+    # Zero line
+    ax.axhline(y=0, color=colors.negative, linestyle="--", alpha=0.5, linewidth=1)
+
+    # Annotate each point
+    for i, m in enumerate(margins):
+        offset = 8 if m >= 0 else -15
+        ax.annotate(f"{m:.0f}%", (i, m), textcoords="offset points",
+                   xytext=(0, offset), ha="center", fontsize=10,
+                   fontweight="bold", color=colors.primary)
+
+    ax.set_xticks(list(range(len(periods))))
+    ax.set_xticklabels(periods, rotation=45, ha="right", fontsize=10)
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x:.0f}%"))
+    ax.set_title("Gross Margin Trend", fontsize=16, fontweight="bold", pad=12)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is None:
+        output_path = Path(tempfile.mktemp(suffix=".png"))
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def render_revenue_breakdown_bar(
+    context: dict[str, Any],
+    theme: BrandTheme,
+    output_path: Path | None = None,
+) -> Path:
+    """Render stacked bar chart of revenue breakdown by source."""
+    _apply_theme(theme)
+    colors = theme.colors
+    palette = [colors.primary, colors.secondary, colors.accent, "#6366F1"]
+
+    periods = context.get("periods", [])
+    revenue_items = context.get("revenue_items", {})
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    x = range(len(periods))
+
+    bottom = [0.0] * len(periods)
+    for i, (key, item) in enumerate(revenue_items.items()):
+        values = item["values"]
+        color = palette[i % len(palette)]
+        bars = ax.bar(x, values, bottom=bottom, color=color, alpha=0.9,
+                      label=item["label"], zorder=2, edgecolor="white", linewidth=0.5)
+        bottom = [b + v for b, v in zip(bottom, values)]
+
+    # Total labels on top
+    for i, total in enumerate(bottom):
+        ax.text(i, total + max(bottom) * 0.02, _compact_num(total),
+                ha="center", va="bottom", fontsize=9, fontweight="bold",
+                color=colors.text_secondary)
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(periods, rotation=45, ha="right", fontsize=10)
+    _format_currency_axis(ax)
+    ax.legend(loc="upper left", frameon=False, fontsize=10)
+    ax.set_title("Revenue Breakdown", fontsize=16, fontweight="bold", pad=12)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    if output_path is None:
+        output_path = Path(tempfile.mktemp(suffix=".png"))
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 # Chart registry
 CHART_REGISTRY: dict[str, Any] = {
     "revenue_chart": render_revenue_chart,
     "pl_summary": render_pl_summary_chart,
     "growth_line": render_growth_line_chart,
+    "cost_donut": render_cost_breakdown_donut,
+    "margin_trend": render_margin_trend,
+    "revenue_breakdown": render_revenue_breakdown_bar,
 }
 
 

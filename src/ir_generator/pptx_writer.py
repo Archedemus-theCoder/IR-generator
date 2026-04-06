@@ -1,4 +1,4 @@
-"""PPT slide assembly using python-pptx."""
+"""PPT slide assembly using python-pptx — polished visual output."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
 
 from .brand_manager import hex_to_rgb
 from .models import BrandTheme, Slide
@@ -20,20 +21,66 @@ def _rgb(hex_color: str) -> RGBColor:
     return RGBColor(r, g, b)
 
 
-def _add_text_to_shape(
-    shape: Any,
-    text: str,
-    theme: BrandTheme,
-    font_size: int | None = None,
-    bold: bool = False,
-    color: str | None = None,
-    alignment: PP_ALIGN = PP_ALIGN.LEFT,
-) -> None:
-    """Add formatted text to a shape's text frame."""
-    tf = shape.text_frame
-    tf.word_wrap = True
+def _add_rounded_rect(sld, left, top, width, height, hex_color, alpha=1.0):
+    """Add a rounded rectangle background shape."""
+    shape = sld.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height,
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = _rgb(hex_color)
+    shape.line.fill.background()
+    shape.shadow.inherit = False
+    # Adjust corner radius
+    shape.adjustments[0] = 0.05
+    return shape
 
-    # Parse markdown-like formatting
+
+def _add_rect(sld, left, top, width, height, hex_color):
+    """Add a simple rectangle shape."""
+    shape = sld.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, left, top, width, height,
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = _rgb(hex_color)
+    shape.line.fill.background()
+    shape.shadow.inherit = False
+    return shape
+
+
+def _add_circle(sld, left, top, size, hex_color):
+    """Add a circle shape."""
+    shape = sld.shapes.add_shape(
+        MSO_SHAPE.OVAL, left, top, size, size,
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = _rgb(hex_color)
+    shape.line.fill.background()
+    shape.shadow.inherit = False
+    return shape
+
+
+def _add_text_box(
+    sld, left, top, width, height, text, theme,
+    font_size=16, bold=False, color=None, alignment=PP_ALIGN.LEFT,
+    font_name=None, vertical_anchor=None,
+):
+    """Add a text box with formatted text. Returns the shape."""
+    txBox = sld.shapes.add_textbox(left, top, width, height)
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    if vertical_anchor:
+        tf.auto_size = None
+        txBox.text_frame.paragraphs[0].alignment = alignment
+
+    _populate_text_frame(tf, text, theme, font_size, bold, color, alignment, font_name)
+    return txBox
+
+
+def _populate_text_frame(
+    tf, text, theme, font_size=16, bold=False, color=None,
+    alignment=PP_ALIGN.LEFT, font_name=None,
+):
+    """Populate a text frame with markdown-parsed text."""
     lines = text.strip().split("\n")
     for i, line in enumerate(lines):
         if i == 0:
@@ -42,17 +89,30 @@ def _add_text_to_shape(
             p = tf.add_paragraph()
 
         p.alignment = alignment
+        p.space_after = Pt(4)
+        p.space_before = Pt(2)
 
-        # Handle bullet points
         stripped = line.strip()
+        if not stripped:
+            run = p.add_run()
+            run.text = ""
+            run.font.size = Pt(8)
+            continue
+
+        # Bullet handling with proper indent
+        indent_level = None
         if stripped.startswith("- ") or stripped.startswith("* "):
-            p.level = 0
+            indent_level = 0
             stripped = stripped[2:]
         elif stripped.startswith("  - ") or stripped.startswith("  * "):
-            p.level = 1
+            indent_level = 1
             stripped = stripped[4:]
 
-        # Parse bold segments **text**
+        if indent_level is not None:
+            p.level = indent_level
+            p.space_before = Pt(4)
+
+        # Parse bold **text** segments
         parts = re.split(r"(\*\*.*?\*\*)", stripped)
         for part in parts:
             if part.startswith("**") and part.endswith("**"):
@@ -63,8 +123,8 @@ def _add_text_to_shape(
                 run = p.add_run()
                 run.text = part
 
-            run.font.size = Pt(font_size or theme.sizes.body)
-            run.font.name = theme.fonts.body
+            run.font.size = Pt(font_size)
+            run.font.name = font_name or theme.fonts.body
             run.font.color.rgb = _rgb(color or theme.colors.text_primary)
 
         if bold:
@@ -72,262 +132,281 @@ def _add_text_to_shape(
                 run.font.bold = True
 
 
-def _create_blank_slide(prs: Presentation) -> Any:
-    """Add a blank slide to the presentation."""
-    layout = prs.slide_layouts[6]  # Blank layout
-    return prs.slides.add_slide(layout)
+def _add_slide_number(sld, prs, theme, slide_num):
+    """Add slide number in bottom right."""
+    width = prs.slide_width
+    height = prs.slide_height
+    txBox = sld.shapes.add_textbox(
+        width - Inches(1), height - Inches(0.5), Inches(0.7), Inches(0.3),
+    )
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.RIGHT
+    run = p.add_run()
+    run.text = str(slide_num)
+    run.font.size = Pt(10)
+    run.font.color.rgb = _rgb(theme.colors.text_secondary)
+    run.font.name = theme.fonts.body
 
 
-def build_title_slide(
-    prs: Presentation,
-    slide: Slide,
-    theme: BrandTheme,
-    context: dict[str, Any],
-) -> None:
-    """Build a title/cover slide."""
-    sld = _create_blank_slide(prs)
+def _add_title_bar(sld, prs, title, theme):
+    """Add consistent title bar with accent divider."""
+    width = prs.slide_width
+    title_left = Inches(0.8)
+    title_top = Inches(0.4)
+    title_width = width - Inches(1.6)
+
+    # Title text
+    _add_text_box(
+        sld, title_left, title_top, title_width, Inches(0.7),
+        title, theme,
+        font_size=theme.sizes.subtitle, bold=True,
+        color=theme.colors.primary, font_name=theme.fonts.heading,
+    )
+
+    # Accent divider line
+    _add_rect(sld, title_left, Inches(1.15), Inches(1.5), Pt(3), theme.colors.accent)
+
+    return title_left, title_width
+
+
+# =====================================================
+# SLIDE BUILDERS
+# =====================================================
+
+def build_title_slide(prs, slide, theme, context, **kwargs):
+    """Cover slide with full background and centered title."""
+    sld = prs.slides.add_slide(prs.slide_layouts[6])
     width = prs.slide_width
     height = prs.slide_height
 
-    # Background color
-    background = sld.background
-    fill = background.fill
-    fill.solid()
-    fill.fore_color.rgb = _rgb(theme.colors.primary)
+    # Full background
+    bg = sld.background.fill
+    bg.solid()
+    bg.fore_color.rgb = _rgb(theme.colors.primary)
 
-    # Title text box
-    title_left = Inches(1)
-    title_top = Inches(2.5)
-    title_width = width - Inches(2)
-    title_height = Inches(1.5)
-    txBox = sld.shapes.add_textbox(title_left, title_top, title_width, title_height)
-    _add_text_to_shape(
-        txBox, slide.front_matter.title, theme,
-        font_size=theme.sizes.title, bold=True,
-        color="#FFFFFF", alignment=PP_ALIGN.CENTER,
+    # Decorative accent bar at top
+    _add_rect(sld, Inches(0), Inches(0), width, Inches(0.15), theme.colors.accent)
+
+    # Title
+    _add_text_box(
+        sld, Inches(1.5), Inches(2.2), width - Inches(3), Inches(1.8),
+        slide.front_matter.title, theme,
+        font_size=44, bold=True, color="#FFFFFF",
+        alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
     )
 
     # Subtitle from body
     if slide.rendered_body:
-        sub_top = Inches(4.2)
-        sub_height = Inches(1)
-        txBox2 = sld.shapes.add_textbox(title_left, sub_top, title_width, sub_height)
-        first_line = slide.rendered_body.strip().split("\n")[0]
-        # Strip markdown headers
-        first_line = re.sub(r"^#+\s*", "", first_line)
-        _add_text_to_shape(
-            txBox2, first_line, theme,
-            font_size=theme.sizes.subtitle,
-            color="#FFFFFF", alignment=PP_ALIGN.CENTER,
+        first_line = re.sub(r"^#+\s*", "", slide.rendered_body.strip().split("\n")[0])
+        _add_text_box(
+            sld, Inches(2), Inches(4.2), width - Inches(4), Inches(0.8),
+            first_line, theme,
+            font_size=20, color="#FFFFFF",
+            alignment=PP_ALIGN.CENTER,
         )
 
+    # Bottom accent bar
+    _add_rect(sld, Inches(0), height - Inches(0.08), width, Inches(0.08), theme.colors.accent)
 
-def build_content_slide(
-    prs: Presentation,
-    slide: Slide,
-    theme: BrandTheme,
-    context: dict[str, Any],
-    chart_path: Path | None = None,
-) -> None:
-    """Build a standard content slide with title and body text."""
-    sld = _create_blank_slide(prs)
+
+def build_content_slide(prs, slide, theme, context, chart_path=None, **kwargs):
+    """Content slide with title bar and body text, optional chart."""
+    sld = prs.slides.add_slide(prs.slide_layouts[6])
     width = prs.slide_width
     height = prs.slide_height
 
-    # Title bar
-    title_left = Inches(0.8)
-    title_top = Inches(0.5)
-    title_width = width - Inches(1.6)
-    title_height = Inches(0.8)
-    txBox = sld.shapes.add_textbox(title_left, title_top, title_width, title_height)
-    _add_text_to_shape(
-        txBox, slide.front_matter.title, theme,
-        font_size=theme.sizes.subtitle, bold=True,
-        color=theme.colors.primary,
-    )
+    # Light background stripe at top
+    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
 
-    # Divider line
-    line_top = Inches(1.35)
-    shape = sld.shapes.add_shape(
-        1, title_left, line_top, title_width, Pt(2),  # 1 = rectangle
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = _rgb(theme.colors.accent)
-    shape.line.fill.background()
+    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
 
     # Body text
-    body_top = Inches(1.6)
-    body_height = Inches(5)
-    body_width = title_width
+    body_top = Inches(1.5)
+    body_height = Inches(5.2)
 
     if chart_path and chart_path.exists():
-        # If there's a chart, split: text left, chart right
-        body_width = Inches(4.5)
-
-    txBox2 = sld.shapes.add_textbox(title_left, body_top, body_width, body_height)
-    # Strip markdown headers from body for cleaner display
-    body_text = _strip_md_headers(slide.rendered_body)
-    _add_text_to_shape(txBox2, body_text, theme, font_size=theme.sizes.body)
-
-    # Chart image if present
-    if chart_path and chart_path.exists():
-        chart_left = Inches(5.5)
-        chart_top = Inches(1.6)
-        chart_width = Inches(4.2)
-        chart_height = Inches(4.5)
+        body_width = Inches(5)
+        _add_text_box(
+            sld, title_left, body_top, body_width, body_height,
+            _strip_md_headers(slide.rendered_body), theme,
+            font_size=theme.sizes.body,
+        )
+        # Chart on right with subtle card background
+        card_left = Inches(6.3)
+        card_top = Inches(1.5)
+        card_w = Inches(6.2)
+        card_h = Inches(5.2)
+        _add_rounded_rect(sld, card_left, card_top, card_w, card_h, "#F8F9FA")
         sld.shapes.add_picture(
-            str(chart_path), chart_left, chart_top, chart_width, chart_height,
+            str(chart_path),
+            card_left + Inches(0.2), card_top + Inches(0.2),
+            card_w - Inches(0.4), card_h - Inches(0.4),
+        )
+    else:
+        _add_text_box(
+            sld, title_left, body_top, title_width, body_height,
+            _strip_md_headers(slide.rendered_body), theme,
+            font_size=theme.sizes.body,
         )
 
+    _add_slide_number(sld, prs, theme, len(prs.slides))
 
-def build_two_column_slide(
-    prs: Presentation,
-    slide: Slide,
-    theme: BrandTheme,
-    context: dict[str, Any],
-    chart_path: Path | None = None,
-) -> None:
-    """Build a two-column slide: text left, chart/image right."""
-    sld = _create_blank_slide(prs)
+
+def build_two_column_slide(prs, slide, theme, context, chart_path=None, **kwargs):
+    """Two-column: text left, chart/visual right."""
+    sld = prs.slides.add_slide(prs.slide_layouts[6])
     width = prs.slide_width
 
-    # Title
-    title_left = Inches(0.8)
-    title_top = Inches(0.5)
-    title_width = width - Inches(1.6)
-    title_height = Inches(0.8)
-    txBox = sld.shapes.add_textbox(title_left, title_top, title_width, title_height)
-    _add_text_to_shape(
-        txBox, slide.front_matter.title, theme,
-        font_size=theme.sizes.subtitle, bold=True,
-        color=theme.colors.primary,
+    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
+    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
+
+    # Left column text
+    _add_text_box(
+        sld, title_left, Inches(1.5), Inches(5.2), Inches(5.2),
+        _strip_md_headers(slide.rendered_body), theme,
+        font_size=theme.sizes.body,
     )
 
-    # Divider line
-    line_top = Inches(1.35)
-    shape = sld.shapes.add_shape(
-        1, title_left, line_top, title_width, Pt(2),
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = _rgb(theme.colors.accent)
-    shape.line.fill.background()
-
-    # Left column: text
-    left_top = Inches(1.6)
-    left_width = Inches(4.5)
-    left_height = Inches(5)
-    txBox2 = sld.shapes.add_textbox(title_left, left_top, left_width, left_height)
-    body_text = _strip_md_headers(slide.rendered_body)
-    _add_text_to_shape(txBox2, body_text, theme, font_size=theme.sizes.body)
-
-    # Right column: chart or placeholder
-    right_left = Inches(5.5)
-    right_top = Inches(1.6)
-    right_width = Inches(4.2)
-    right_height = Inches(4.5)
+    # Right column
+    right_left = Inches(6.5)
+    right_top = Inches(1.5)
+    right_w = Inches(6)
+    right_h = Inches(5.2)
 
     if chart_path and chart_path.exists():
+        _add_rounded_rect(sld, right_left, right_top, right_w, right_h, "#F8F9FA")
         sld.shapes.add_picture(
-            str(chart_path), right_left, right_top, right_width, right_height,
+            str(chart_path),
+            right_left + Inches(0.2), right_top + Inches(0.2),
+            right_w - Inches(0.4), right_h - Inches(0.4),
         )
+    else:
+        # If no chart, show key metrics as cards from context
+        _build_metric_cards(sld, theme, context, right_left, right_top, right_w)
+
+    _add_slide_number(sld, prs, theme, len(prs.slides))
 
 
-def build_metric_highlight_slide(
-    prs: Presentation,
-    slide: Slide,
-    theme: BrandTheme,
-    context: dict[str, Any],
-) -> None:
-    """Build a big metric highlight slide."""
-    sld = _create_blank_slide(prs)
+def build_metric_highlight_slide(prs, slide, theme, context, **kwargs):
+    """Big metric with supporting KPI cards below."""
+    sld = prs.slides.add_slide(prs.slide_layouts[6])
     width = prs.slide_width
     height = prs.slide_height
 
-    # Title at top
-    title_left = Inches(0.8)
-    title_top = Inches(0.5)
-    title_width = width - Inches(1.6)
-    txBox = sld.shapes.add_textbox(title_left, title_top, title_width, Inches(0.8))
-    _add_text_to_shape(
-        txBox, slide.front_matter.title, theme,
-        font_size=theme.sizes.subtitle, bold=True,
-        color=theme.colors.primary,
-    )
+    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
+    _add_title_bar(sld, prs, slide.front_matter.title, theme)
 
-    # Big metric in center - extract first line as the metric
     body_lines = slide.rendered_body.strip().split("\n")
     metric_text = _strip_md_headers(body_lines[0]) if body_lines else ""
-    remaining = "\n".join(body_lines[1:]).strip() if len(body_lines) > 1 else ""
+    supporting_lines = [l.strip() for l in body_lines[1:] if l.strip()]
 
-    metric_top = Inches(2.5)
-    metric_height = Inches(1.8)
-    txBox2 = sld.shapes.add_textbox(title_left, metric_top, title_width, metric_height)
-    _add_text_to_shape(
-        txBox2, metric_text, theme,
-        font_size=theme.sizes.metric_highlight, bold=True,
-        color=theme.colors.accent, alignment=PP_ALIGN.CENTER,
+    # Big metric — centered with accent color
+    _add_text_box(
+        sld, Inches(1), Inches(1.8), width - Inches(2), Inches(1.8),
+        metric_text, theme,
+        font_size=64, bold=True, color=theme.colors.accent,
+        alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
     )
 
-    # Supporting text below
-    if remaining:
-        sub_top = Inches(4.5)
-        sub_height = Inches(2)
-        txBox3 = sld.shapes.add_textbox(title_left, sub_top, title_width, sub_height)
-        _add_text_to_shape(
-            txBox3, _strip_md_headers(remaining), theme,
-            font_size=theme.sizes.body, alignment=PP_ALIGN.CENTER,
-        )
+    # Supporting metrics as cards
+    metric_items = []
+    for line in supporting_lines:
+        line = line.lstrip("- *")
+        if line:
+            metric_items.append(line)
+
+    if metric_items:
+        num_cards = min(len(metric_items), 4)
+        card_width = Inches(2.5)
+        total_cards_width = num_cards * card_width + (num_cards - 1) * Inches(0.3)
+        start_left = (width - total_cards_width) // 2
+
+        for idx, item in enumerate(metric_items[:4]):
+            card_left = start_left + idx * (card_width + Inches(0.3))
+            card_top = Inches(4.0)
+            card_h = Inches(2.2)
+
+            # Card background
+            _add_rounded_rect(sld, card_left, card_top, card_width, card_h, "#F8F9FA")
+
+            # Accent top border on card
+            _add_rect(
+                sld, card_left + Inches(0.1), card_top + Inches(0.08),
+                card_width - Inches(0.2), Pt(4),
+                [theme.colors.primary, theme.colors.secondary, theme.colors.accent, theme.colors.positive][idx % 4],
+            )
+
+            # Split into value and label if possible (e.g., "150+ enterprise customers")
+            parts = item.split(" ", 1)
+            if parts[0] and any(c.isdigit() for c in parts[0]):
+                value_text = parts[0]
+                label_text = parts[1] if len(parts) > 1 else ""
+            else:
+                value_text = ""
+                label_text = item
+
+            if value_text:
+                _add_text_box(
+                    sld, card_left + Inches(0.2), card_top + Inches(0.4),
+                    card_width - Inches(0.4), Inches(0.8),
+                    value_text, theme,
+                    font_size=28, bold=True,
+                    color=theme.colors.primary,
+                    alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
+                )
+                _add_text_box(
+                    sld, card_left + Inches(0.2), card_top + Inches(1.3),
+                    card_width - Inches(0.4), Inches(0.6),
+                    label_text, theme,
+                    font_size=11, color=theme.colors.text_secondary,
+                    alignment=PP_ALIGN.CENTER,
+                )
+            else:
+                _add_text_box(
+                    sld, card_left + Inches(0.2), card_top + Inches(0.6),
+                    card_width - Inches(0.4), Inches(1.2),
+                    label_text, theme,
+                    font_size=13, color=theme.colors.text_primary,
+                    alignment=PP_ALIGN.CENTER,
+                )
+
+    _add_slide_number(sld, prs, theme, len(prs.slides))
 
 
-def build_table_slide(
-    prs: Presentation,
-    slide: Slide,
-    theme: BrandTheme,
-    context: dict[str, Any],
-) -> None:
-    """Build a financial table slide from context data."""
-    sld = _create_blank_slide(prs)
+def build_table_slide(prs, slide, theme, context, **kwargs):
+    """Financial table with styled header and alternating rows."""
+    sld = prs.slides.add_slide(prs.slide_layouts[6])
     width = prs.slide_width
 
-    # Title
-    title_left = Inches(0.8)
-    title_top = Inches(0.5)
-    title_width = width - Inches(1.6)
-    txBox = sld.shapes.add_textbox(title_left, title_top, title_width, Inches(0.8))
-    _add_text_to_shape(
-        txBox, slide.front_matter.title, theme,
-        font_size=theme.sizes.subtitle, bold=True,
-        color=theme.colors.primary,
-    )
+    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
+    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
 
-    # Build a P&L summary table from context
-    periods = context.get("periods", [])[:8]  # Max 8 columns
+    periods = context.get("periods", [])[:8]
     revenue = context.get("revenue_by_period", [])[:8]
     costs = context.get("costs_by_period", [])[:8]
     profit = context.get("profit_by_period", [])[:8]
 
     if not periods:
-        # Fallback to body text if no data
         build_content_slide(prs, slide, theme, context)
         return
 
-    rows = 4  # Header, Revenue, Costs, Profit
-    cols = len(periods) + 1  # Label + periods
+    rows = 4
+    cols = len(periods) + 1
 
     table_left = Inches(0.8)
     table_top = Inches(1.6)
     table_width = width - Inches(1.6)
-    table_height = Inches(3)
+    table_height = Inches(3.2)
 
     table_shape = sld.shapes.add_table(rows, cols, table_left, table_top, table_width, table_height)
     table = table_shape.table
 
-    # Header row
+    # Style header row
     _set_cell(table.cell(0, 0), "", theme, bold=True, header=True)
     for i, p in enumerate(periods):
         _set_cell(table.cell(0, i + 1), p, theme, bold=True, header=True)
 
-    # Data rows
     row_data = [
         ("Revenue", revenue, theme.colors.primary),
         ("Costs", costs, theme.colors.text_primary),
@@ -343,19 +422,70 @@ def build_table_slide(
                 cell_color = theme.colors.positive if val >= 0 else theme.colors.negative
             _set_cell(table.cell(row_idx, col_idx + 1), text, theme, color=cell_color)
 
+        # Alternating row backgrounds
+        if row_idx % 2 == 0:
+            for c in range(cols):
+                table.cell(row_idx, c).fill.solid()
+                table.cell(row_idx, c).fill.fore_color.rgb = _rgb("#F8F9FA")
 
-def _set_cell(
-    cell: Any,
-    text: str,
-    theme: BrandTheme,
-    bold: bool = False,
-    header: bool = False,
-    color: str | None = None,
-) -> None:
+    _add_slide_number(sld, prs, theme, len(prs.slides))
+
+
+def _build_metric_cards(sld, theme, context, left, top, total_width):
+    """Build auto-generated metric cards when no chart is specified."""
+    # Extract key metrics from context
+    metrics = []
+    years = sorted(set(
+        k.split("_")[-1]
+        for k in context
+        if k.startswith("total_revenue_") and k.split("_")[-1].isdigit()
+    ))
+
+    if years:
+        latest = years[-1]
+        rev = context.get(f"total_revenue_{latest}", 0)
+        margin = context.get(f"gross_margin_{latest}", 0)
+        profit = context.get(f"gross_profit_{latest}", 0)
+        metrics = [
+            (f"${rev/1_000_000:.1f}M" if rev >= 1_000_000 else f"${rev/1_000:.0f}K", f"FY{latest} Revenue"),
+            (f"{margin*100:.0f}%", f"FY{latest} Gross Margin"),
+            (f"${profit/1_000_000:.1f}M" if abs(profit) >= 1_000_000 else f"${profit/1_000:.0f}K", f"FY{latest} Profit"),
+        ]
+
+    if not metrics:
+        return
+
+    card_h = Inches(1.4)
+    gap = Inches(0.2)
+
+    for idx, (value, label) in enumerate(metrics[:3]):
+        card_top = top + idx * (card_h + gap)
+        _add_rounded_rect(sld, left, card_top, total_width, card_h, "#F8F9FA")
+
+        # Color accent on left edge
+        accent_colors = [theme.colors.primary, theme.colors.accent, theme.colors.positive]
+        _add_rect(sld, left, card_top + Inches(0.15), Inches(0.08), card_h - Inches(0.3), accent_colors[idx % 3])
+
+        _add_text_box(
+            sld, left + Inches(0.3), card_top + Inches(0.15),
+            total_width - Inches(0.5), Inches(0.7),
+            value, theme,
+            font_size=26, bold=True, color=theme.colors.primary,
+            font_name=theme.fonts.heading,
+        )
+        _add_text_box(
+            sld, left + Inches(0.3), card_top + Inches(0.85),
+            total_width - Inches(0.5), Inches(0.4),
+            label, theme,
+            font_size=12, color=theme.colors.text_secondary,
+        )
+
+
+def _set_cell(cell, text, theme, bold=False, header=False, color=None):
     """Set cell text with formatting."""
     cell.text = text
     for paragraph in cell.text_frame.paragraphs:
-        paragraph.alignment = PP_ALIGN.RIGHT if not bold or header else PP_ALIGN.LEFT
+        paragraph.alignment = PP_ALIGN.RIGHT if not header and not bold else PP_ALIGN.CENTER if header else PP_ALIGN.LEFT
         for run in paragraph.runs:
             run.font.size = Pt(11)
             run.font.name = theme.fonts.body
@@ -370,7 +500,7 @@ def _set_cell(
         cell.fill.fore_color.rgb = _rgb(theme.colors.primary)
 
 
-def _format_table_number(value: float) -> str:
+def _format_table_number(value):
     if abs(value) >= 1_000_000:
         return f"${value/1_000_000:.1f}M"
     if abs(value) >= 1_000:
@@ -378,8 +508,8 @@ def _format_table_number(value: float) -> str:
     return f"${value:,.0f}"
 
 
-def _strip_md_headers(text: str) -> str:
-    """Remove markdown header prefixes (## ) from text."""
+def _strip_md_headers(text):
+    """Remove markdown header prefixes."""
     lines = []
     for line in text.split("\n"):
         lines.append(re.sub(r"^#+\s*", "", line))
@@ -396,34 +526,21 @@ LAYOUT_BUILDERS = {
 }
 
 
-def create_presentation(
-    slides: list[Slide],
-    theme: BrandTheme,
-    context: dict[str, Any],
-    chart_paths: dict[str, Path],
-    base_template: Path | None = None,
-    output_path: Path = Path("output/deck.pptx"),
-) -> Path:
+def create_presentation(slides, theme, context, chart_paths,
+                        base_template=None, output_path=Path("output/deck.pptx")):
     """Create a full PowerPoint presentation from slides."""
     if base_template and base_template.exists():
         prs = Presentation(str(base_template))
     else:
         prs = Presentation()
-        prs.slide_width = Inches(13.333)  # Widescreen 16:9
+        prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
     for slide in slides:
         layout = slide.front_matter.layout
         builder = LAYOUT_BUILDERS.get(layout, build_content_slide)
-
         chart_path = chart_paths.get(slide.front_matter.chart) if slide.front_matter.chart else None
-
-        if layout in ("content", "two_column"):
-            builder(prs, slide, theme, context, chart_path=chart_path)
-        elif layout == "table":
-            builder(prs, slide, theme, context)
-        else:
-            builder(prs, slide, theme, context)
+        builder(prs, slide, theme, context, chart_path=chart_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
