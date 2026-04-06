@@ -282,9 +282,12 @@ def _build_pl(prs, d, n):
     _headline(sld, d.headline)
     if not d.years or not d.rows:
         return
+
+    # Left side: P&L table (narrower to make room for chart)
+    table_w = 5.5
     rows = len(d.rows) + 1
     cols = len(d.years) + 1
-    tbl = sld.shapes.add_table(rows, cols, Inches(M), Inches(3.0), Inches(W - M * 2), Inches(3.5))
+    tbl = sld.shapes.add_table(rows, cols, Inches(M), Inches(3.0), Inches(table_w), Inches(3.5))
     table = tbl.table
     # Header
     for i in range(cols):
@@ -305,6 +308,22 @@ def _build_pl(prs, d, n):
             if val.startswith("-"):
                 clr = "#E74C3C"
             _style_cell(table.cell(ri, ci + 1), val, color=clr, align=PP_ALIGN.RIGHT)
+
+    # Right side: Auto-generated chart
+    try:
+        from charts import render_pl_chart
+        import tempfile
+        chart_bytes = render_pl_chart(d)
+        if chart_bytes:
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.write(chart_bytes)
+            tmp.close()
+            chart_left = M + table_w + 0.3
+            chart_w = W - chart_left - M
+            _rrect(sld, chart_left, 2.8, chart_w, 4.0, CARD_BG)
+            sld.shapes.add_picture(tmp.name, Inches(chart_left + 0.15), Inches(2.95), Inches(chart_w - 0.3), Inches(3.7))
+    except Exception:
+        pass  # Chart generation failed — table only
 
 
 def _build_investment(prs, d, n):
@@ -422,3 +441,112 @@ def generate_pptx(doc: IRDocument, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
     return output_path
+
+
+def generate_single_slide_png(doc: IRDocument, slide_id: str):
+    """Generate a single slide as PNG bytes (for preview).
+
+    Since python-pptx can't render to image directly, we generate
+    the slide as a 1-slide PPTX and use a simplified HTML-like approach
+    via matplotlib for preview.
+    """
+    slide_data = getattr(doc, slide_id, None)
+    if slide_data is None:
+        return None
+
+    from charts import render_pl_chart, render_revenue_growth_chart
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    import io
+    import textwrap
+
+    fig, ax = plt.subplots(figsize=(13.333, 7.5))
+    fig.patch.set_facecolor("white")
+    ax.set_xlim(0, 13.333)
+    ax.set_ylim(0, 7.5)
+    ax.invert_yaxis()
+    ax.set_axis_off()
+
+    label = getattr(slide_data, "section_label", "")
+    headline = getattr(slide_data, "headline", "")
+
+    if slide_id == "cover":
+        # Dark background
+        ax.add_patch(patches.Rectangle((0, 0), 13.333, 7.5, facecolor=BLACK))
+        ax.add_patch(patches.Rectangle((0, 0), 13.333, 0.12, facecolor=ORANGE))
+        ax.text(6.666, 2.5, getattr(slide_data, "company_name", ""), ha="center", va="center",
+                fontsize=40, fontweight="bold", color="white")
+        ax.text(6.666, 3.5, getattr(slide_data, "tagline", ""), ha="center", va="center",
+                fontsize=16, color="#999999")
+        # KPI cards
+        kpis = getattr(slide_data, "kpis", [])
+        for i, k in enumerate(kpis[:3]):
+            cx = 3 + i * 3
+            ax.add_patch(patches.FancyBboxPatch((cx - 1.3, 4.5), 2.6, 1.2,
+                         boxstyle="round,pad=0.1", facecolor="#222222", edgecolor="none"))
+            ax.text(cx, 4.9, k.value, ha="center", va="center", fontsize=18, fontweight="bold", color=ORANGE)
+            ax.text(cx, 5.3, k.label, ha="center", va="center", fontsize=9, color="#888888")
+        ax.add_patch(patches.Rectangle((0, 7.42), 13.333, 0.08, facecolor=ORANGE))
+    elif slide_id == "pl":
+        # Section label
+        ax.text(0.7, 0.5, label, fontsize=14, fontweight="bold", color=ORANGE)
+        wrapped = textwrap.fill(headline, width=50)
+        ax.text(0.7, 1.2, wrapped, fontsize=20, fontweight="bold", color=BLACK, va="top")
+        # Simple table representation
+        years = getattr(slide_data, "years", [])
+        rows = getattr(slide_data, "rows", [])
+        if years and rows:
+            ax.text(0.7, 3.2, "  ".join(["항목"] + years), fontsize=11, fontweight="bold", color="white",
+                    bbox=dict(boxstyle="square,pad=0.3", facecolor=BLACK))
+            for ri, row in enumerate(rows):
+                vals = [row.values.get(y, "") for y in years]
+                y_pos = 3.7 + ri * 0.4
+                row_text = "  ".join([row.label] + vals)
+                ax.text(0.7, y_pos, row_text, fontsize=10, color=BLACK)
+        ax.text(8, 3.0, "[차트 자동 생성됨]", fontsize=14, fontweight="bold", color=ORANGE,
+                ha="center", bbox=dict(boxstyle="round,pad=0.5", facecolor=LIGHT_GRAY, edgecolor="none"))
+    else:
+        # Generic preview
+        ax.text(0.7, 0.5, label, fontsize=14, fontweight="bold", color=ORANGE)
+        wrapped = textwrap.fill(headline, width=50)
+        ax.text(0.7, 1.2, wrapped, fontsize=20, fontweight="bold", color=BLACK, va="top")
+
+        # Show body/items as preview
+        body = getattr(slide_data, "body", "")
+        items = getattr(slide_data, "data_cards", None) or getattr(slide_data, "items", None) or \
+                getattr(slide_data, "points", None) or getattr(slide_data, "model_types", None) or \
+                getattr(slide_data, "moats", None) or getattr(slide_data, "phases", None) or \
+                getattr(slide_data, "members", None) or getattr(slide_data, "use_of_funds", None)
+
+        if items and hasattr(items[0], "label"):
+            n = min(len(items), 4)
+            cw = 2.8
+            gap = 0.2
+            sx = (13.333 - n * cw - (n - 1) * gap) / 2
+            for i, item in enumerate(items[:4]):
+                cx = sx + i * (cw + gap)
+                ax.add_patch(patches.FancyBboxPatch((cx, 3.5), cw, 2.8,
+                             boxstyle="round,pad=0.1", facecolor=LIGHT_GRAY, edgecolor="none"))
+                color_bar = [ORANGE, BLACK, "#2ECC71", "#6366F1"][i % 4]
+                ax.add_patch(patches.Rectangle((cx + 0.1, 3.58), cw - 0.2, 0.05, facecolor=color_bar))
+                ax.text(cx + cw / 2, 4.0, getattr(item, "label", ""), ha="center", fontsize=12, fontweight="bold")
+                val = getattr(item, "value", "")
+                ax.text(cx + cw / 2, 4.6, val, ha="center", fontsize=16, fontweight="bold", color=ORANGE)
+                sub = getattr(item, "sub", "") or getattr(item, "description", "") or getattr(item, "bio", "")
+                if sub:
+                    wrapped_sub = textwrap.fill(sub, width=20)
+                    ax.text(cx + cw / 2, 5.2, wrapped_sub, ha="center", fontsize=9, color="#555555")
+        elif body:
+            wrapped_body = textwrap.fill(body, width=70)
+            ax.text(0.7, 3.0, wrapped_body, fontsize=13, color=BLACK, va="top")
+
+    # Slide number
+    ax.text(12.8, 0.4, "", fontsize=10, color=GRAY, ha="right")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()

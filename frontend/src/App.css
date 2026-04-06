@@ -71,3 +71,27 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Inter', sa
 .inline-field { display: flex; align-items: center; gap: 4px; }
 .inline-label { font-size: 11px; color: #999; min-width: 40px; }
 .inline-field input { width: 80px; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+
+/* --- Preview --- */
+.preview-section { margin-top: 32px; padding-top: 24px; border-top: 2px solid #f0f0f0; }
+.preview-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.preview-header h3 { font-size: 18px; font-weight: 700; }
+.preview-loading { font-size: 12px; color: #E8470A; background: #fff5f0; padding: 2px 8px; border-radius: 4px; }
+
+.preview-image-container { background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.preview-image { width: 100%; height: auto; display: block; }
+
+.chart-preview { margin-top: 20px; }
+.chart-preview h4 { font-size: 14px; margin-bottom: 8px; color: #333; }
+.chart-image { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; }
+
+/* --- Financial sync --- */
+.financial-sync { margin-top: 20px; background: #fff9f5; border: 1px solid #fce0cc; border-radius: 8px; padding: 16px; }
+.financial-sync h4 { font-size: 14px; margin-bottom: 8px; }
+.sync-note { font-size: 12px; color: #888; margin-bottom: 12px; }
+.sync-summary { display: flex; flex-direction: column; gap: 8px; }
+.sync-row { display: flex; align-items: center; gap: 12px; }
+.sync-label { font-size: 13px; font-weight: 600; min-width: 80px; }
+.sync-values { display: flex; gap: 8px; flex-wrap: wrap; }
+.sync-value { font-size: 12px; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid #eee; }
+.sync-value.negative { color: #E74C3C; border-color: #fdd; }

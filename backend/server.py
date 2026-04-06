@@ -1,11 +1,13 @@
 """FastAPI backend — IR data management + PPT export."""
 
 import json
+import io
+import base64
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from schema import IRDocument, SLIDE_NAMES
 
@@ -96,6 +98,47 @@ def download_pptx():
         from pptx_engine import generate_pptx
         generate_pptx(doc, output_path)
     return FileResponse(output_path, filename="Rovothome_IR.pptx")
+
+
+@app.get("/api/preview/{slide_id}")
+def preview_slide(slide_id: str):
+    """Generate a single slide preview as PNG image."""
+    doc = _load()
+    from pptx_engine import generate_single_slide_png
+    img_bytes = generate_single_slide_png(doc, slide_id)
+    if img_bytes is None:
+        return {"error": "Could not generate preview"}
+    b64 = base64.b64encode(img_bytes).decode()
+    return {"image": b64, "slide_id": slide_id}
+
+
+@app.get("/api/financials/summary")
+def financial_summary():
+    """Get computed financial summary for sync across slides."""
+    doc = _load()
+    pl = doc.pl
+    summary = {}
+    for row in pl.rows:
+        for year, val in row.values.items():
+            key = f"{row.label}_{year}"
+            summary[key] = val
+    # Also expose top-level numbers
+    if pl.rows:
+        revenue_row = next((r for r in pl.rows if "매출" in r.label), None)
+        if revenue_row:
+            summary["latest_revenue"] = list(revenue_row.values.values())[-1] if revenue_row.values else "0"
+            summary["revenue_by_year"] = revenue_row.values
+    return summary
+
+
+@app.post("/api/chart/pl")
+def generate_pl_chart():
+    """Generate P&L chart as base64 PNG."""
+    doc = _load()
+    from charts import render_pl_chart
+    img_bytes = render_pl_chart(doc.pl)
+    b64 = base64.b64encode(img_bytes).decode()
+    return {"image": b64}
 
 
 if __name__ == "__main__":

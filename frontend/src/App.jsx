@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import Editor from './components/Editor'
+import Preview from './components/Preview'
 import './App.css'
 
 const API = 'http://localhost:8000/api'
@@ -145,12 +146,15 @@ export default function App() {
       />
       <main className="main">
         {selectedSlide && doc[selectedSlide] && (
-          <Editor
-            slideId={selectedSlide}
-            slideName={slideNames[selectedSlide] || selectedSlide}
-            data={doc[selectedSlide]}
-            onUpdate={(field, value) => updateSlide(selectedSlide, field, value)}
-          />
+          <>
+            <Editor
+              slideId={selectedSlide}
+              slideName={slideNames[selectedSlide] || selectedSlide}
+              data={doc[selectedSlide]}
+              onUpdate={(field, value) => updateSlide(selectedSlide, field, value)}
+            />
+            <Preview slideId={selectedSlide} doc={doc} />
+          </>
         )}
       </main>
     </div>
