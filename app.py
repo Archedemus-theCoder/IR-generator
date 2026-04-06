@@ -5,12 +5,16 @@ PPT를 자동 생성/다운로드하는 웹 대시보드.
 """
 
 import io
+import sys
 import copy
 from pathlib import Path
 
 import streamlit as st
 import yaml
 import pandas as pd
+
+# Ensure src/ is importable (no pip install -e . needed)
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 # Project root
 PROJECT_ROOT = Path(__file__).parent
