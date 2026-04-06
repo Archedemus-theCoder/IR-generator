@@ -1,9 +1,8 @@
-output/*.pptx
-output/*.pdf
+node_modules/
+dist/
+build/
 __pycache__/
 *.pyc
 *.egg-info/
-dist/
-build/
+output/*.pptx
 .venv/
-*.tmp
