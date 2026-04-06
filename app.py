@@ -290,6 +290,72 @@ elif page == "📝 슬라이드 편집":
                     # Variables hint
                     st.caption("사용 가능한 변수: `{{ company_name }}`, `{{ total_revenue_2025 | currency }}`, `{{ gross_margin_2026 | percent }}`, `{{ nrr }}` 등")
 
+                    # --- Slide Preview ---
+                    st.markdown("---")
+                    st.markdown("**미리보기**")
+                    try:
+                        from ir_generator.template_engine import render_slide_body
+                        from ir_generator.financial_engine import load_pl, load_assumptions, compute_financial_context
+
+                        fin_dir = PROJECT_ROOT / "financials"
+                        pl = load_pl(fin_dir / "pl.yaml")
+                        assumptions = load_assumptions(fin_dir / "assumptions.yaml")
+                        fin_ctx = compute_financial_context(pl, assumptions)
+
+                        preview_ctx = {}
+                        preview_ctx.update(defaults)
+                        preview_ctx.update(fin_ctx.as_dict())
+
+                        rendered_title = render_slide_body(new_title, preview_ctx)
+                        rendered_body = render_slide_body(new_body, preview_ctx)
+                    except Exception:
+                        rendered_title = new_title
+                        rendered_body = new_body
+
+                    # Layout-aware preview
+                    layout_colors = {
+                        "title": ("#1A2B4F", "#FFFFFF"),
+                        "content": ("#FFFFFF", "#1A1A1A"),
+                        "two_column": ("#FFFFFF", "#1A1A1A"),
+                        "metric_highlight": ("#FFFFFF", "#F5A623"),
+                        "table": ("#FFFFFF", "#1A1A1A"),
+                    }
+                    bg_color, text_color = layout_colors.get(new_layout, ("#FFFFFF", "#1A1A1A"))
+
+                    if new_layout == "title":
+                        st.markdown(
+                            f"""<div style="background:{bg_color}; color:{text_color}; padding:40px; border-radius:8px; text-align:center; min-height:200px; display:flex; flex-direction:column; justify-content:center;">
+                            <h1 style="color:{text_color}; margin:0;">{rendered_title}</h1>
+                            <p style="color:{text_color}; opacity:0.8; margin-top:12px;">{rendered_body.split(chr(10))[0] if rendered_body else ''}</p>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+                    elif new_layout == "metric_highlight":
+                        body_lines = rendered_body.strip().split("\n")
+                        metric = body_lines[0].replace("## ", "").replace("# ", "") if body_lines else ""
+                        sub_text = "<br>".join(body_lines[1:]) if len(body_lines) > 1 else ""
+                        st.markdown(
+                            f"""<div style="background:{bg_color}; padding:40px; border-radius:8px; text-align:center; min-height:200px; border:1px solid #333;">
+                            <p style="color:#1A2B4F; font-size:14px; font-weight:bold;">{rendered_title}</p>
+                            <h1 style="color:{text_color}; font-size:48px; margin:20px 0;">{metric}</h1>
+                            <p style="color:#6B7280; font-size:14px;">{sub_text}</p>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        # content / two_column / table
+                        rendered_html = rendered_body.replace("\n", "<br>")
+                        for prefix in ["## ", "# ", "### "]:
+                            rendered_html = rendered_html.replace(f"<br>{prefix}", "<br><strong>").replace(prefix, "<strong>")
+                        rendered_html = rendered_html.replace("**", "")
+                        st.markdown(
+                            f"""<div style="background:{bg_color}; padding:30px; border-radius:8px; min-height:200px; border:1px solid #333;">
+                            <h2 style="color:#1A2B4F; border-bottom:2px solid #F5A623; padding-bottom:8px;">{rendered_title}</h2>
+                            <div style="color:{text_color}; margin-top:16px; line-height:1.8;">{rendered_html}</div>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+
                     # Save individual slide
                     if st.button(f"💾 저장", key=f"save_{i}"):
                         save_slide(sf, fm, new_body)

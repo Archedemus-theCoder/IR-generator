@@ -1,9 +1,7 @@
 """Pydantic data models for IR Generator."""
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -47,9 +45,9 @@ class SlideFrontMatter(BaseModel):
     layout: str = "content"
     audiences: list[str] = Field(default_factory=lambda: ["internal", "external"])
     title: str = ""
-    chart: str | None = None
-    speaker_notes: str | None = None
-    order: int | None = None
+    chart: Optional[str] = None
+    speaker_notes: Optional[str] = None
+    order: Optional[int] = None
 
 
 class Slide(BaseModel):
@@ -83,7 +81,7 @@ class PLStatement(BaseModel):
 
 
 class Assumptions(BaseModel):
-    values: dict[str, float | str] = Field(default_factory=dict)
+    values: dict[str, Union[float, str]] = Field(default_factory=dict)
 
 
 class FinancialContext(BaseModel):
@@ -97,7 +95,7 @@ class FinancialContext(BaseModel):
 # --- Build Config ---
 
 class BuildConfig(BaseModel):
-    deck_name: str | None = None
-    audience: str | None = None
+    deck_name: Optional[str] = None
+    audience: Optional[str] = None
     output_dir: Path = Path("output")
     var_overrides: dict[str, str] = Field(default_factory=dict)
