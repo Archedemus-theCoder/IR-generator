@@ -1,0 +1,10 @@
+# Growth assumptions
+revenue_growth_rate_monthly: 0.12
+churn_rate_monthly: 0.03
+average_contract_value: 2500
+cac: 1800
+ltv_to_cac_target: 3.0
+
+# Margin targets
+target_gross_margin: 0.75
+target_operating_margin: 0.15

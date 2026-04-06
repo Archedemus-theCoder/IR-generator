@@ -1,0 +1,12 @@
+name: investor-pitch
+description: "External investor pitch deck"
+audience: external
+slides:
+  - 01-cover.md
+  - 02-problem.md
+  - 03-solution.md
+  - 04-market.md
+  - 05-traction.md
+  - 06-financials.md
+  - 07-financial-detail.md
+  - 08-ask.md

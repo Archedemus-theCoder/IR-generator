@@ -1,0 +1,21 @@
+colors:
+  primary: "#1A2B4F"
+  secondary: "#4A90D9"
+  accent: "#F5A623"
+  background: "#FFFFFF"
+  text_primary: "#1A1A1A"
+  text_secondary: "#6B7280"
+  positive: "#10B981"
+  negative: "#EF4444"
+
+fonts:
+  heading: "Inter"
+  body: "Inter"
+  mono: "Courier New"
+
+sizes:
+  title: 36
+  subtitle: 24
+  body: 16
+  caption: 12
+  metric_highlight: 72

@@ -1,0 +1,9 @@
+output/*.pptx
+output/*.pdf
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+*.tmp
