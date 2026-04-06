@@ -9,14 +9,16 @@ from pydantic import BaseModel, Field
 # --- Brand / Theme ---
 
 class ColorScheme(BaseModel):
-    primary: str = "#1A2B4F"
-    secondary: str = "#4A90D9"
-    accent: str = "#F5A623"
+    primary: str = "#1A1A1A"
+    secondary: str = "#4A4A4A"
+    accent: str = "#E8600A"
     background: str = "#FFFFFF"
+    card_bg: str = "#F2F2F2"
     text_primary: str = "#1A1A1A"
-    text_secondary: str = "#6B7280"
-    positive: str = "#10B981"
-    negative: str = "#EF4444"
+    text_secondary: str = "#808080"
+    positive: str = "#2ECC71"
+    negative: str = "#E74C3C"
+    header_bg: str = "#1A1A1A"
 
 
 class FontScheme(BaseModel):
@@ -26,11 +28,13 @@ class FontScheme(BaseModel):
 
 
 class SizeScheme(BaseModel):
-    title: int = 36
-    subtitle: int = 24
-    body: int = 16
-    caption: int = 12
-    metric_highlight: int = 72
+    section_label: int = 16
+    title: int = 28
+    subtitle: int = 22
+    body: int = 14
+    caption: int = 11
+    metric_highlight: int = 56
+    slide_number: int = 12
 
 
 class BrandTheme(BaseModel):

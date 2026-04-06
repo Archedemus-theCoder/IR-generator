@@ -1,4 +1,13 @@
-"""PPT slide assembly using python-pptx — polished visual output."""
+"""PPT slide assembly — matching actual IR template style.
+
+Design system:
+- White background, light gray (#F2F2F2) card panels
+- Orange (#E8600A) accent for section labels and keyword highlights
+- Black text with orange highlights for emphasis
+- Pattern: orange section label → big bold headline → content below
+- Rounded-corner gray panels for grouping
+- Slide numbers top-right
+"""
 
 from __future__ import annotations
 
@@ -7,13 +16,17 @@ from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
+from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
 from .brand_manager import hex_to_rgb
 from .models import BrandTheme, Slide
+
+W = 13.333  # Slide width in inches (16:9)
+H = 7.5     # Slide height in inches
+MARGIN = 0.7
 
 
 def _rgb(hex_color: str) -> RGBColor:
@@ -21,366 +34,411 @@ def _rgb(hex_color: str) -> RGBColor:
     return RGBColor(r, g, b)
 
 
-def _add_rounded_rect(sld, left, top, width, height, hex_color, alpha=1.0):
-    """Add a rounded rectangle background shape."""
-    shape = sld.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height,
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = _rgb(hex_color)
-    shape.line.fill.background()
-    shape.shadow.inherit = False
-    # Adjust corner radius
-    shape.adjustments[0] = 0.05
-    return shape
+# --- Low-level helpers ---
+
+def _rect(sld, left, top, w, h, color):
+    s = sld.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(top), Inches(w), Inches(h))
+    s.fill.solid()
+    s.fill.fore_color.rgb = _rgb(color)
+    s.line.fill.background()
+    s.shadow.inherit = False
+    return s
 
 
-def _add_rect(sld, left, top, width, height, hex_color):
-    """Add a simple rectangle shape."""
-    shape = sld.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE, left, top, width, height,
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = _rgb(hex_color)
-    shape.line.fill.background()
-    shape.shadow.inherit = False
-    return shape
+def _rounded_rect(sld, left, top, w, h, color):
+    s = sld.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(top), Inches(w), Inches(h))
+    s.fill.solid()
+    s.fill.fore_color.rgb = _rgb(color)
+    s.line.fill.background()
+    s.shadow.inherit = False
+    s.adjustments[0] = 0.03
+    return s
 
 
-def _add_circle(sld, left, top, size, hex_color):
-    """Add a circle shape."""
-    shape = sld.shapes.add_shape(
-        MSO_SHAPE.OVAL, left, top, size, size,
-    )
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = _rgb(hex_color)
-    shape.line.fill.background()
-    shape.shadow.inherit = False
-    return shape
-
-
-def _add_text_box(
-    sld, left, top, width, height, text, theme,
-    font_size=16, bold=False, color=None, alignment=PP_ALIGN.LEFT,
-    font_name=None, vertical_anchor=None,
-):
-    """Add a text box with formatted text. Returns the shape."""
-    txBox = sld.shapes.add_textbox(left, top, width, height)
-    tf = txBox.text_frame
+def _text_box(sld, left, top, w, h, text, theme,
+              size=14, bold=False, color=None, align=PP_ALIGN.LEFT, font=None):
+    """Add a text box. Supports **bold** and <<accent>> markup."""
+    tb = sld.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
+    tf = tb.text_frame
     tf.word_wrap = True
-    if vertical_anchor:
-        tf.auto_size = None
-        txBox.text_frame.paragraphs[0].alignment = alignment
 
-    _populate_text_frame(tf, text, theme, font_size, bold, color, alignment, font_name)
-    return txBox
-
-
-def _populate_text_frame(
-    tf, text, theme, font_size=16, bold=False, color=None,
-    alignment=PP_ALIGN.LEFT, font_name=None,
-):
-    """Populate a text frame with markdown-parsed text."""
-    lines = text.strip().split("\n")
+    lines = text.strip().split("\n") if text.strip() else [""]
     for i, line in enumerate(lines):
-        if i == 0:
-            p = tf.paragraphs[0]
-        else:
-            p = tf.add_paragraph()
-
-        p.alignment = alignment
-        p.space_after = Pt(4)
-        p.space_before = Pt(2)
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = align
+        p.space_after = Pt(3)
+        p.space_before = Pt(1)
 
         stripped = line.strip()
         if not stripped:
             run = p.add_run()
-            run.text = ""
-            run.font.size = Pt(8)
+            run.text = " "
+            run.font.size = Pt(6)
             continue
 
-        # Bullet handling with proper indent
-        indent_level = None
+        # Bullet handling
         if stripped.startswith("- ") or stripped.startswith("* "):
-            indent_level = 0
+            p.level = 0
             stripped = stripped[2:]
         elif stripped.startswith("  - ") or stripped.startswith("  * "):
-            indent_level = 1
+            p.level = 1
             stripped = stripped[4:]
 
-        if indent_level is not None:
-            p.level = indent_level
-            p.space_before = Pt(4)
+        # Parse: **bold**, <<accent text>> (orange highlight)
+        _add_rich_text(p, stripped, theme, size, bold, color, font)
 
-        # Parse bold **text** segments
-        parts = re.split(r"(\*\*.*?\*\*)", stripped)
-        for part in parts:
-            if part.startswith("**") and part.endswith("**"):
-                run = p.add_run()
-                run.text = part[2:-2]
+    return tb
+
+
+def _add_rich_text(p, text, theme, size, base_bold, base_color, font):
+    """Parse **bold** and <<accent>> in text and add runs."""
+    # First split on <<...>> for accent
+    accent_parts = re.split(r"(<<.*?>>)", text)
+    for apart in accent_parts:
+        if apart.startswith("<<") and apart.endswith(">>"):
+            inner = apart[2:-2]
+            # Could still have **bold** inside
+            _add_bold_runs(p, inner, theme, size, True, theme.colors.accent, font)
+        else:
+            _add_bold_runs(p, apart, theme, size, base_bold, base_color, font)
+
+
+def _add_bold_runs(p, text, theme, size, base_bold, base_color, font):
+    """Parse **bold** markup and add runs."""
+    parts = re.split(r"(\*\*.*?\*\*)", text)
+    for part in parts:
+        run = p.add_run()
+        if part.startswith("**") and part.endswith("**"):
+            run.text = part[2:-2]
+            run.font.bold = True
+        else:
+            run.text = part
+            if base_bold:
                 run.font.bold = True
-            else:
-                run = p.add_run()
-                run.text = part
-
-            run.font.size = Pt(font_size)
-            run.font.name = font_name or theme.fonts.body
-            run.font.color.rgb = _rgb(color or theme.colors.text_primary)
-
-        if bold:
-            for run in p.runs:
-                run.font.bold = True
+        run.font.size = Pt(size)
+        run.font.name = font or theme.fonts.body
+        run.font.color.rgb = _rgb(base_color or theme.colors.text_primary)
 
 
-def _add_slide_number(sld, prs, theme, slide_num):
-    """Add slide number in bottom right."""
-    width = prs.slide_width
-    height = prs.slide_height
-    txBox = sld.shapes.add_textbox(
-        width - Inches(1), height - Inches(0.5), Inches(0.7), Inches(0.3),
-    )
-    tf = txBox.text_frame
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.RIGHT
-    run = p.add_run()
-    run.text = str(slide_num)
-    run.font.size = Pt(10)
-    run.font.color.rgb = _rgb(theme.colors.text_secondary)
-    run.font.name = theme.fonts.body
+def _slide_number(sld, num, theme):
+    """Slide number in top-right corner."""
+    _text_box(sld, W - 1.0, 0.3, 0.5, 0.4, str(num), theme,
+              size=theme.sizes.slide_number, color=theme.colors.text_secondary,
+              align=PP_ALIGN.RIGHT)
 
 
-def _add_title_bar(sld, prs, title, theme):
-    """Add consistent title bar with accent divider."""
-    width = prs.slide_width
-    title_left = Inches(0.8)
-    title_top = Inches(0.4)
-    title_width = width - Inches(1.6)
+def _section_label(sld, text, theme, left=MARGIN, top=0.4):
+    """Orange section label (small, bold, top-left)."""
+    _text_box(sld, left, top, 8, 0.4, text, theme,
+              size=theme.sizes.section_label, bold=True,
+              color=theme.colors.accent, font=theme.fonts.heading)
 
-    # Title text
-    _add_text_box(
-        sld, title_left, title_top, title_width, Inches(0.7),
-        title, theme,
-        font_size=theme.sizes.subtitle, bold=True,
-        color=theme.colors.primary, font_name=theme.fonts.heading,
-    )
 
-    # Accent divider line
-    _add_rect(sld, title_left, Inches(1.15), Inches(1.5), Pt(3), theme.colors.accent)
+def _headline(sld, text, theme, left=MARGIN, top=0.85, width=None):
+    """Large bold headline with <<accent>> support."""
+    w = width or (W - MARGIN * 2)
+    _text_box(sld, left, top, w, 1.5, text, theme,
+              size=theme.sizes.title, bold=True,
+              color=theme.colors.primary, font=theme.fonts.heading)
 
-    return title_left, title_width
+
+def _card_header(sld, text, theme, left, top, width):
+    """Black header bar inside a card."""
+    _rect(sld, left, top, width, 0.45, theme.colors.header_bg)
+    _text_box(sld, left + 0.15, top + 0.05, width - 0.3, 0.35, text, theme,
+              size=12, bold=True, color="#FFFFFF", align=PP_ALIGN.CENTER)
+
+
+def _body_text(sld, text, theme, left, top, width, height):
+    """Standard body text with markdown parsing."""
+    body = _strip_md_headers(text)
+    _text_box(sld, left, top, width, height, body, theme,
+              size=theme.sizes.body, color=theme.colors.primary)
+
+
+# --- Common slide header pattern ---
+
+def _slide_header(sld, slide, theme, slide_num):
+    """Standard header: section label + headline + slide number.
+
+    Convention:
+    - front_matter.title = section label (orange, small)
+    - First ## line in body = headline (large, bold)
+    - Rest = body content
+    """
+    _slide_number(sld, slide_num, theme)
+
+    # Section label
+    if slide.front_matter.title:
+        _section_label(sld, slide.front_matter.title, theme)
+
+    # Extract headline (first ## line) and remaining body
+    headline, body = _extract_headline(slide.rendered_body)
+
+    if headline:
+        _headline(sld, headline, theme)
+
+    return headline, body
+
+
+def _extract_headline(rendered_body):
+    """Split body into headline (first ## line) and remaining body."""
+    lines = rendered_body.strip().split("\n")
+    headline = ""
+    body_start = 0
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("## ") or stripped.startswith("# "):
+            headline = re.sub(r"^#+\s*", "", stripped)
+            body_start = i + 1
+            # Check for continuation lines (non-blank, non-bullet, non-header lines)
+            for j in range(i + 1, len(lines)):
+                next_line = lines[j].strip()
+                if next_line and not next_line.startswith(("#", "-", "*")) and not next_line.startswith("  "):
+                    headline += "\n" + next_line
+                    body_start = j + 1
+                else:
+                    break
+            break
+
+    remaining = "\n".join(lines[body_start:]).strip()
+    return headline, remaining
+
+
+def _strip_md_headers(text):
+    lines = []
+    for line in text.split("\n"):
+        lines.append(re.sub(r"^#+\s*", "", line))
+    return "\n".join(lines)
+
+
+def _blank(prs):
+    return prs.slides.add_slide(prs.slide_layouts[6])
 
 
 # =====================================================
 # SLIDE BUILDERS
 # =====================================================
 
-def build_title_slide(prs, slide, theme, context, **kwargs):
-    """Cover slide with full background and centered title."""
-    sld = prs.slides.add_slide(prs.slide_layouts[6])
-    width = prs.slide_width
-    height = prs.slide_height
-
-    # Full background
+def build_title_slide(prs, slide, theme, context, **kw):
+    """Cover slide: full dark background, centered title."""
+    sld = _blank(prs)
     bg = sld.background.fill
     bg.solid()
     bg.fore_color.rgb = _rgb(theme.colors.primary)
 
-    # Decorative accent bar at top
-    _add_rect(sld, Inches(0), Inches(0), width, Inches(0.15), theme.colors.accent)
+    # Top accent bar
+    _rect(sld, 0, 0, W, 0.12, theme.colors.accent)
 
-    # Title
-    _add_text_box(
-        sld, Inches(1.5), Inches(2.2), width - Inches(3), Inches(1.8),
-        slide.front_matter.title, theme,
-        font_size=44, bold=True, color="#FFFFFF",
-        alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
-    )
+    # Title centered
+    title = slide.front_matter.title
+    _text_box(sld, 1.5, 2.0, W - 3, 2.0, title, theme,
+              size=40, bold=True, color="#FFFFFF",
+              align=PP_ALIGN.CENTER, font=theme.fonts.heading)
 
-    # Subtitle from body
+    # Subtitle
     if slide.rendered_body:
-        first_line = re.sub(r"^#+\s*", "", slide.rendered_body.strip().split("\n")[0])
-        _add_text_box(
-            sld, Inches(2), Inches(4.2), width - Inches(4), Inches(0.8),
-            first_line, theme,
-            font_size=20, color="#FFFFFF",
-            alignment=PP_ALIGN.CENTER,
-        )
+        first = re.sub(r"^#+\s*", "", slide.rendered_body.strip().split("\n")[0])
+        _text_box(sld, 2, 4.2, W - 4, 1.0, first, theme,
+                  size=18, color="#FFFFFF", align=PP_ALIGN.CENTER)
 
     # Bottom accent bar
-    _add_rect(sld, Inches(0), height - Inches(0.08), width, Inches(0.08), theme.colors.accent)
+    _rect(sld, 0, H - 0.08, W, 0.08, theme.colors.accent)
 
 
-def build_content_slide(prs, slide, theme, context, chart_path=None, **kwargs):
-    """Content slide with title bar and body text, optional chart."""
-    sld = prs.slides.add_slide(prs.slide_layouts[6])
-    width = prs.slide_width
-    height = prs.slide_height
+def build_content_slide(prs, slide, theme, context, chart_path=None, **kw):
+    """Standard content: section label → headline → body text, optional chart."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    headline, body = _slide_header(sld, slide, theme, num)
 
-    # Light background stripe at top
-    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
-
-    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
-
-    # Body text
-    body_top = Inches(1.5)
-    body_height = Inches(5.2)
+    body_top = 2.5 if headline else 1.5
 
     if chart_path and chart_path.exists():
-        body_width = Inches(5)
-        _add_text_box(
-            sld, title_left, body_top, body_width, body_height,
-            _strip_md_headers(slide.rendered_body), theme,
-            font_size=theme.sizes.body,
-        )
-        # Chart on right with subtle card background
-        card_left = Inches(6.3)
-        card_top = Inches(1.5)
-        card_w = Inches(6.2)
-        card_h = Inches(5.2)
-        _add_rounded_rect(sld, card_left, card_top, card_w, card_h, "#F8F9FA")
+        # Text left, chart right
+        _body_text(sld, body, theme, MARGIN, body_top, 5.5, 4.5)
+        _rounded_rect(sld, 6.8, body_top, 5.8, 4.5, theme.colors.card_bg)
         sld.shapes.add_picture(
-            str(chart_path),
-            card_left + Inches(0.2), card_top + Inches(0.2),
-            card_w - Inches(0.4), card_h - Inches(0.4),
+            str(chart_path), Inches(7.0), Inches(body_top + 0.15),
+            Inches(5.4), Inches(4.2),
         )
     else:
-        _add_text_box(
-            sld, title_left, body_top, title_width, body_height,
-            _strip_md_headers(slide.rendered_body), theme,
-            font_size=theme.sizes.body,
-        )
-
-    _add_slide_number(sld, prs, theme, len(prs.slides))
+        _body_text(sld, body, theme, MARGIN, body_top, W - MARGIN * 2, 4.5)
 
 
-def build_two_column_slide(prs, slide, theme, context, chart_path=None, **kwargs):
-    """Two-column: text left, chart/visual right."""
-    sld = prs.slides.add_slide(prs.slide_layouts[6])
-    width = prs.slide_width
+def build_two_column_slide(prs, slide, theme, context, chart_path=None, **kw):
+    """Text left + chart/metric cards right."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    headline, body = _slide_header(sld, slide, theme, num)
 
-    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
-    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
+    body_top = 2.5 if headline else 1.5
 
-    # Left column text
-    _add_text_box(
-        sld, title_left, Inches(1.5), Inches(5.2), Inches(5.2),
-        _strip_md_headers(slide.rendered_body), theme,
-        font_size=theme.sizes.body,
-    )
+    # Left: body text
+    _body_text(sld, body, theme, MARGIN, body_top, 5.5, 4.5)
 
-    # Right column
-    right_left = Inches(6.5)
-    right_top = Inches(1.5)
-    right_w = Inches(6)
-    right_h = Inches(5.2)
+    # Right: chart or auto metric cards
+    right_left = 6.8
+    right_w = 5.8
 
     if chart_path and chart_path.exists():
-        _add_rounded_rect(sld, right_left, right_top, right_w, right_h, "#F8F9FA")
+        _rounded_rect(sld, right_left, body_top, right_w, 4.5, theme.colors.card_bg)
         sld.shapes.add_picture(
-            str(chart_path),
-            right_left + Inches(0.2), right_top + Inches(0.2),
-            right_w - Inches(0.4), right_h - Inches(0.4),
+            str(chart_path), Inches(right_left + 0.15), Inches(body_top + 0.15),
+            Inches(right_w - 0.3), Inches(4.2),
         )
     else:
-        # If no chart, show key metrics as cards from context
-        _build_metric_cards(sld, theme, context, right_left, right_top, right_w)
-
-    _add_slide_number(sld, prs, theme, len(prs.slides))
+        _build_auto_metrics(sld, theme, context, right_left, body_top, right_w)
 
 
-def build_metric_highlight_slide(prs, slide, theme, context, **kwargs):
-    """Big metric with supporting KPI cards below."""
-    sld = prs.slides.add_slide(prs.slide_layouts[6])
-    width = prs.slide_width
-    height = prs.slide_height
+def build_two_panel_slide(prs, slide, theme, context, **kw):
+    """Two equal side-by-side panels (comparison layout)."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    headline, body = _slide_header(sld, slide, theme, num)
 
-    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
-    _add_title_bar(sld, prs, slide.front_matter.title, theme)
+    body_top = 2.5 if headline else 1.5
+    panel_w = 5.8
+    panel_h = 4.3
+    gap = 0.4
 
-    body_lines = slide.rendered_body.strip().split("\n")
-    metric_text = _strip_md_headers(body_lines[0]) if body_lines else ""
-    supporting_lines = [l.strip() for l in body_lines[1:] if l.strip()]
+    # Parse body into two sections (split by ---)
+    sections = body.split("---")
+    left_text = sections[0].strip() if len(sections) >= 1 else ""
+    right_text = sections[1].strip() if len(sections) >= 2 else ""
 
-    # Big metric — centered with accent color
-    _add_text_box(
-        sld, Inches(1), Inches(1.8), width - Inches(2), Inches(1.8),
-        metric_text, theme,
-        font_size=64, bold=True, color=theme.colors.accent,
-        alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
-    )
+    # Left panel
+    left_x = MARGIN
+    _rounded_rect(sld, left_x, body_top, panel_w, panel_h, theme.colors.card_bg)
 
-    # Supporting metrics as cards
-    metric_items = []
-    for line in supporting_lines:
-        line = line.lstrip("- *")
-        if line:
-            metric_items.append(line)
+    left_lines = left_text.split("\n", 1)
+    left_title = re.sub(r"^#+\s*", "", left_lines[0]) if left_lines else ""
+    left_body = left_lines[1].strip() if len(left_lines) > 1 else ""
 
-    if metric_items:
-        num_cards = min(len(metric_items), 4)
-        card_width = Inches(2.5)
-        total_cards_width = num_cards * card_width + (num_cards - 1) * Inches(0.3)
-        start_left = (width - total_cards_width) // 2
+    if left_title:
+        _card_header(sld, left_title, theme, left_x, body_top, panel_w)
+        _body_text(sld, left_body, theme, left_x + 0.3, body_top + 0.6, panel_w - 0.6, panel_h - 0.9)
+    else:
+        _body_text(sld, left_text, theme, left_x + 0.3, body_top + 0.3, panel_w - 0.6, panel_h - 0.6)
 
-        for idx, item in enumerate(metric_items[:4]):
-            card_left = start_left + idx * (card_width + Inches(0.3))
-            card_top = Inches(4.0)
-            card_h = Inches(2.2)
+    # Right panel
+    right_x = MARGIN + panel_w + gap
+    _rounded_rect(sld, right_x, body_top, panel_w, panel_h, theme.colors.card_bg)
 
-            # Card background
-            _add_rounded_rect(sld, card_left, card_top, card_width, card_h, "#F8F9FA")
+    right_lines = right_text.split("\n", 1)
+    right_title = re.sub(r"^#+\s*", "", right_lines[0]) if right_lines else ""
+    right_body = right_lines[1].strip() if len(right_lines) > 1 else ""
 
-            # Accent top border on card
-            _add_rect(
-                sld, card_left + Inches(0.1), card_top + Inches(0.08),
-                card_width - Inches(0.2), Pt(4),
-                [theme.colors.primary, theme.colors.secondary, theme.colors.accent, theme.colors.positive][idx % 4],
-            )
+    if right_title:
+        _card_header(sld, right_title, theme, right_x, body_top, panel_w)
+        _body_text(sld, right_body, theme, right_x + 0.3, body_top + 0.6, panel_w - 0.6, panel_h - 0.9)
+    else:
+        _body_text(sld, right_text, theme, right_x + 0.3, body_top + 0.3, panel_w - 0.6, panel_h - 0.6)
 
-            # Split into value and label if possible (e.g., "150+ enterprise customers")
+    _slide_number(sld, num, theme)
+
+
+def build_three_column_slide(prs, slide, theme, context, **kw):
+    """Three cards side by side."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    headline, body = _slide_header(sld, slide, theme, num)
+
+    body_top = 2.5 if headline else 1.5
+    card_w = 3.7
+    card_h = 4.3
+    gap = 0.3
+
+    sections = body.split("---")
+    total_w = 3 * card_w + 2 * gap
+    start_x = (W - total_w) / 2
+
+    accent_colors = [theme.colors.accent, theme.colors.primary, theme.colors.positive]
+
+    for idx in range(3):
+        text = sections[idx].strip() if idx < len(sections) else ""
+        card_x = start_x + idx * (card_w + gap)
+
+        _rounded_rect(sld, card_x, body_top, card_w, card_h, theme.colors.card_bg)
+
+        # Top accent line
+        _rect(sld, card_x + 0.15, body_top + 0.12, card_w - 0.3, 0.06, accent_colors[idx % 3])
+
+        lines = text.split("\n", 1)
+        card_title = re.sub(r"^#+\s*", "", lines[0]) if lines else ""
+        card_body = lines[1].strip() if len(lines) > 1 else ""
+
+        # Card title
+        _text_box(sld, card_x + 0.25, body_top + 0.35, card_w - 0.5, 0.5,
+                  card_title, theme, size=16, bold=True,
+                  color=theme.colors.primary, font=theme.fonts.heading)
+
+        # Card body
+        if card_body:
+            _body_text(sld, card_body, theme, card_x + 0.25, body_top + 0.95,
+                       card_w - 0.5, card_h - 1.2)
+
+    _slide_number(sld, num, theme)
+
+
+def build_metric_highlight_slide(prs, slide, theme, context, **kw):
+    """Big metric number with KPI cards below."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    headline, body = _slide_header(sld, slide, theme, num)
+
+    body_lines = body.strip().split("\n") if body else []
+    metric_text = body_lines[0].strip() if body_lines else ""
+    supporting = [l.strip().lstrip("- *") for l in body_lines[1:] if l.strip()]
+
+    # Big metric
+    metric_top = 2.2 if headline else 1.5
+    _text_box(sld, 1, metric_top, W - 2, 1.5, metric_text, theme,
+              size=theme.sizes.metric_highlight, bold=True,
+              color=theme.colors.accent, align=PP_ALIGN.CENTER,
+              font=theme.fonts.heading)
+
+    # KPI cards
+    if supporting:
+        n = min(len(supporting), 4)
+        card_w = 2.6
+        gap = 0.25
+        total_w = n * card_w + (n - 1) * gap
+        start_x = (W - total_w) / 2
+        card_top = metric_top + 2.0
+
+        accent_colors = [theme.colors.accent, theme.colors.primary, theme.colors.positive, "#6366F1"]
+
+        for idx, item in enumerate(supporting[:4]):
+            cx = start_x + idx * (card_w + gap)
+            _rounded_rect(sld, cx, card_top, card_w, 2.0, theme.colors.card_bg)
+            _rect(sld, cx + 0.1, card_top + 0.08, card_w - 0.2, 0.05, accent_colors[idx % 4])
+
+            # Try to split "value label"
             parts = item.split(" ", 1)
-            if parts[0] and any(c.isdigit() for c in parts[0]):
-                value_text = parts[0]
-                label_text = parts[1] if len(parts) > 1 else ""
+            if parts[0] and any(c.isdigit() or c == '%' for c in parts[0]):
+                _text_box(sld, cx + 0.15, card_top + 0.3, card_w - 0.3, 0.7,
+                          parts[0], theme, size=26, bold=True,
+                          color=theme.colors.primary, align=PP_ALIGN.CENTER,
+                          font=theme.fonts.heading)
+                if len(parts) > 1:
+                    _text_box(sld, cx + 0.15, card_top + 1.1, card_w - 0.3, 0.7,
+                              parts[1], theme, size=11,
+                              color=theme.colors.text_secondary, align=PP_ALIGN.CENTER)
             else:
-                value_text = ""
-                label_text = item
+                _text_box(sld, cx + 0.15, card_top + 0.5, card_w - 0.3, 1.2,
+                          item, theme, size=13,
+                          color=theme.colors.primary, align=PP_ALIGN.CENTER)
 
-            if value_text:
-                _add_text_box(
-                    sld, card_left + Inches(0.2), card_top + Inches(0.4),
-                    card_width - Inches(0.4), Inches(0.8),
-                    value_text, theme,
-                    font_size=28, bold=True,
-                    color=theme.colors.primary,
-                    alignment=PP_ALIGN.CENTER, font_name=theme.fonts.heading,
-                )
-                _add_text_box(
-                    sld, card_left + Inches(0.2), card_top + Inches(1.3),
-                    card_width - Inches(0.4), Inches(0.6),
-                    label_text, theme,
-                    font_size=11, color=theme.colors.text_secondary,
-                    alignment=PP_ALIGN.CENTER,
-                )
-            else:
-                _add_text_box(
-                    sld, card_left + Inches(0.2), card_top + Inches(0.6),
-                    card_width - Inches(0.4), Inches(1.2),
-                    label_text, theme,
-                    font_size=13, color=theme.colors.text_primary,
-                    alignment=PP_ALIGN.CENTER,
-                )
-
-    _add_slide_number(sld, prs, theme, len(prs.slides))
+    _slide_number(sld, num, theme)
 
 
-def build_table_slide(prs, slide, theme, context, **kwargs):
-    """Financial table with styled header and alternating rows."""
-    sld = prs.slides.add_slide(prs.slide_layouts[6])
-    width = prs.slide_width
-
-    _add_rect(sld, Inches(0), Inches(0), width, Inches(1.3), "#F8F9FA")
-    title_left, title_width = _add_title_bar(sld, prs, slide.front_matter.title, theme)
+def build_table_slide(prs, slide, theme, context, **kw):
+    """Financial table with styled header."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+    _slide_header(sld, slide, theme, num)
 
     periods = context.get("periods", [])[:8]
     revenue = context.get("revenue_by_period", [])[:8]
@@ -394,147 +452,163 @@ def build_table_slide(prs, slide, theme, context, **kwargs):
     rows = 4
     cols = len(periods) + 1
 
-    table_left = Inches(0.8)
-    table_top = Inches(1.6)
-    table_width = width - Inches(1.6)
-    table_height = Inches(3.2)
+    tbl = sld.shapes.add_table(
+        rows, cols, Inches(MARGIN), Inches(2.5),
+        Inches(W - MARGIN * 2), Inches(3.5),
+    )
+    table = tbl.table
 
-    table_shape = sld.shapes.add_table(rows, cols, table_left, table_top, table_width, table_height)
-    table = table_shape.table
+    # Header
+    for i in range(cols):
+        cell = table.cell(0, i)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = _rgb(theme.colors.header_bg)
+        text = "" if i == 0 else periods[i - 1]
+        _style_cell(cell, text, theme, bold=True, color="#FFFFFF", align=PP_ALIGN.CENTER)
 
-    # Style header row
-    _set_cell(table.cell(0, 0), "", theme, bold=True, header=True)
-    for i, p in enumerate(periods):
-        _set_cell(table.cell(0, i + 1), p, theme, bold=True, header=True)
-
-    row_data = [
-        ("Revenue", revenue, theme.colors.primary),
-        ("Costs", costs, theme.colors.text_primary),
+    # Data
+    data_rows = [
+        ("Revenue", revenue, theme.colors.accent),
+        ("Costs", costs, theme.colors.primary),
         ("Profit", profit, None),
     ]
 
-    for row_idx, (label, values, color) in enumerate(row_data, start=1):
-        _set_cell(table.cell(row_idx, 0), label, theme, bold=True)
-        for col_idx, val in enumerate(values):
-            text = _format_table_number(val)
-            cell_color = color
-            if label == "Profit":
-                cell_color = theme.colors.positive if val >= 0 else theme.colors.negative
-            _set_cell(table.cell(row_idx, col_idx + 1), text, theme, color=cell_color)
+    for row_idx, (label, values, color) in enumerate(data_rows, 1):
+        _style_cell(table.cell(row_idx, 0), label, theme, bold=True)
 
-        # Alternating row backgrounds
+        # Alternating row bg
         if row_idx % 2 == 0:
             for c in range(cols):
                 table.cell(row_idx, c).fill.solid()
-                table.cell(row_idx, c).fill.fore_color.rgb = _rgb("#F8F9FA")
+                table.cell(row_idx, c).fill.fore_color.rgb = _rgb(theme.colors.card_bg)
 
-    _add_slide_number(sld, prs, theme, len(prs.slides))
+        for col_idx, val in enumerate(values):
+            text = _fmt_num(val)
+            c = color
+            if label == "Profit":
+                c = theme.colors.positive if val >= 0 else theme.colors.negative
+            _style_cell(table.cell(row_idx, col_idx + 1), text, theme, color=c)
 
 
-def _build_metric_cards(sld, theme, context, left, top, total_width):
-    """Build auto-generated metric cards when no chart is specified."""
-    # Extract key metrics from context
-    metrics = []
+def build_section_divider_slide(prs, slide, theme, context, **kw):
+    """Section divider: gray background with centered section title."""
+    sld = _blank(prs)
+    num = len(prs.slides)
+
+    bg = sld.background.fill
+    bg.solid()
+    bg.fore_color.rgb = _rgb(theme.colors.card_bg)
+
+    # Accent bar
+    _rect(sld, 0, 0, W, 0.08, theme.colors.accent)
+
+    # Section title centered
+    title = slide.front_matter.title
+    _text_box(sld, 2, 2.5, W - 4, 2.0, title, theme,
+              size=36, bold=True, color=theme.colors.primary,
+              align=PP_ALIGN.CENTER, font=theme.fonts.heading)
+
+    # Subtitle from body
+    if slide.rendered_body:
+        first = re.sub(r"^#+\s*", "", slide.rendered_body.strip().split("\n")[0])
+        _text_box(sld, 2, 4.5, W - 4, 1.0, first, theme,
+                  size=16, color=theme.colors.text_secondary,
+                  align=PP_ALIGN.CENTER)
+
+    _slide_number(sld, num, theme)
+
+
+# --- Auto metric cards (when no chart) ---
+
+def _build_auto_metrics(sld, theme, context, left, top, width):
+    """Auto-generate metric cards from financial context."""
     years = sorted(set(
         k.split("_")[-1]
         for k in context
         if k.startswith("total_revenue_") and k.split("_")[-1].isdigit()
     ))
-
-    if years:
-        latest = years[-1]
-        rev = context.get(f"total_revenue_{latest}", 0)
-        margin = context.get(f"gross_margin_{latest}", 0)
-        profit = context.get(f"gross_profit_{latest}", 0)
-        metrics = [
-            (f"${rev/1_000_000:.1f}M" if rev >= 1_000_000 else f"${rev/1_000:.0f}K", f"FY{latest} Revenue"),
-            (f"{margin*100:.0f}%", f"FY{latest} Gross Margin"),
-            (f"${profit/1_000_000:.1f}M" if abs(profit) >= 1_000_000 else f"${profit/1_000:.0f}K", f"FY{latest} Profit"),
-        ]
-
-    if not metrics:
+    if not years:
         return
 
-    card_h = Inches(1.4)
-    gap = Inches(0.2)
+    latest = years[-1]
+    rev = context.get(f"total_revenue_{latest}", 0)
+    margin = context.get(f"gross_margin_{latest}", 0)
+    profit = context.get(f"gross_profit_{latest}", 0)
 
-    for idx, (value, label) in enumerate(metrics[:3]):
-        card_top = top + idx * (card_h + gap)
-        _add_rounded_rect(sld, left, card_top, total_width, card_h, "#F8F9FA")
+    metrics = [
+        (_fmt_compact(rev), f"FY{latest} Revenue", theme.colors.accent),
+        (f"{margin*100:.0f}%", f"FY{latest} Gross Margin", theme.colors.primary),
+        (_fmt_compact(profit), f"FY{latest} Profit", theme.colors.positive if profit >= 0 else theme.colors.negative),
+    ]
 
-        # Color accent on left edge
-        accent_colors = [theme.colors.primary, theme.colors.accent, theme.colors.positive]
-        _add_rect(sld, left, card_top + Inches(0.15), Inches(0.08), card_h - Inches(0.3), accent_colors[idx % 3])
+    card_h = 1.3
+    gap = 0.2
 
-        _add_text_box(
-            sld, left + Inches(0.3), card_top + Inches(0.15),
-            total_width - Inches(0.5), Inches(0.7),
-            value, theme,
-            font_size=26, bold=True, color=theme.colors.primary,
-            font_name=theme.fonts.heading,
-        )
-        _add_text_box(
-            sld, left + Inches(0.3), card_top + Inches(0.85),
-            total_width - Inches(0.5), Inches(0.4),
-            label, theme,
-            font_size=12, color=theme.colors.text_secondary,
-        )
+    for idx, (value, label, color) in enumerate(metrics):
+        cy = top + idx * (card_h + gap)
+        _rounded_rect(sld, left, cy, width, card_h, theme.colors.card_bg)
+        _rect(sld, left, cy + 0.15, 0.07, card_h - 0.3, color)
+        _text_box(sld, left + 0.3, cy + 0.1, width - 0.5, 0.6,
+                  value, theme, size=24, bold=True, color=theme.colors.primary,
+                  font=theme.fonts.heading)
+        _text_box(sld, left + 0.3, cy + 0.75, width - 0.5, 0.4,
+                  label, theme, size=11, color=theme.colors.text_secondary)
 
 
-def _set_cell(cell, text, theme, bold=False, header=False, color=None):
-    """Set cell text with formatting."""
+# --- Cell helpers ---
+
+def _style_cell(cell, text, theme, bold=False, color=None, align=PP_ALIGN.RIGHT):
     cell.text = text
-    for paragraph in cell.text_frame.paragraphs:
-        paragraph.alignment = PP_ALIGN.RIGHT if not header and not bold else PP_ALIGN.CENTER if header else PP_ALIGN.LEFT
-        for run in paragraph.runs:
+    for p in cell.text_frame.paragraphs:
+        p.alignment = align
+        for run in p.runs:
             run.font.size = Pt(11)
             run.font.name = theme.fonts.body
             run.font.bold = bold
             if color:
                 run.font.color.rgb = _rgb(color)
-            elif header:
-                run.font.color.rgb = _rgb("#FFFFFF")
-
-    if header:
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = _rgb(theme.colors.primary)
 
 
-def _format_table_number(value):
-    if abs(value) >= 1_000_000:
-        return f"${value/1_000_000:.1f}M"
-    if abs(value) >= 1_000:
-        return f"${value/1_000:,.0f}K"
-    return f"${value:,.0f}"
+def _fmt_num(v):
+    if abs(v) >= 1_000_000:
+        return f"${v/1_000_000:.1f}M"
+    if abs(v) >= 1_000:
+        return f"${v/1_000:,.0f}K"
+    return f"${v:,.0f}"
 
 
-def _strip_md_headers(text):
-    """Remove markdown header prefixes."""
-    lines = []
-    for line in text.split("\n"):
-        lines.append(re.sub(r"^#+\s*", "", line))
-    return "\n".join(lines)
+def _fmt_compact(v):
+    if abs(v) >= 1_000_000_000:
+        return f"${v/1_000_000_000:.1f}B"
+    if abs(v) >= 1_000_000:
+        return f"${v/1_000_000:.1f}M"
+    if abs(v) >= 1_000:
+        return f"${v/1_000:.0f}K"
+    return f"${v:,.0f}"
 
 
-# Layout builder registry
+# --- Registry ---
+
 LAYOUT_BUILDERS = {
     "title": build_title_slide,
     "content": build_content_slide,
     "two_column": build_two_column_slide,
+    "two_panel": build_two_panel_slide,
+    "three_column": build_three_column_slide,
     "metric_highlight": build_metric_highlight_slide,
     "table": build_table_slide,
+    "section_divider": build_section_divider_slide,
 }
 
 
 def create_presentation(slides, theme, context, chart_paths,
                         base_template=None, output_path=Path("output/deck.pptx")):
-    """Create a full PowerPoint presentation from slides."""
     if base_template and base_template.exists():
         prs = Presentation(str(base_template))
     else:
         prs = Presentation()
-        prs.slide_width = Inches(13.333)
-        prs.slide_height = Inches(7.5)
+        prs.slide_width = Inches(W)
+        prs.slide_height = Inches(H)
 
     for slide in slides:
         layout = slide.front_matter.layout

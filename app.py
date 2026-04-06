@@ -261,7 +261,7 @@ elif page == "📝 슬라이드 편집":
                     fm["title"] = new_title
 
                     # Edit layout
-                    layout_options = ["title", "content", "two_column", "metric_highlight", "table"]
+                    layout_options = ["title", "content", "two_column", "two_panel", "three_column", "metric_highlight", "table", "section_divider"]
                     new_layout = st.selectbox(
                         "레이아웃",
                         layout_options,
